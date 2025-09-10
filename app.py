@@ -8,9 +8,8 @@ import time
 from io import BytesIO
 import shutil
 import gcsfs
+from google.cloud import storage
 from google.oauth2 import service_account
-from google.auth import default
-import traceback
 
 # Configuración de la página
 st.set_page_config(
@@ -20,243 +19,263 @@ st.set_page_config(
 )
 
 # Configuración de GCP y rutas de archivo en el bucket
-GCS_BUCKET = "bk_vn"
+GCS_BUCKET = "bk-vn"
 GCS_PATH = "nissan/prices"
-USERS_FILE = f"{GCS_BUCKET}/{GCS_PATH}/users.json"
-SESSIONS_FILE = f"{GCS_BUCKET}/{GCS_PATH}/sessions.json"
-PRODUCTS_FILE = f"{GCS_BUCKET}/{GCS_PATH}/products.csv"
-PRODUCTS_HISTORICAL_PATH = f"{GCS_BUCKET}/{GCS_PATH}/historical/"
-
-# Variable global para el filesystem
-fs = None
+USERS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/users.json"
+SESSIONS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/sessions.json"
+PRODUCTS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/products.csv"
+PRODUCTS_HISTORICAL_PATH = f"gs://{GCS_BUCKET}/{GCS_PATH}/historical/"
 
 # Lógica para inicializar el cliente de GCS
-def initialize_gcs():
-    """Inicializa el cliente de GCS con manejo de errores"""
-    global fs
+try:
+    service_account_info = st.secrets["gcp_service_account"]
+except KeyError:
+    st.error("No se encontraron las credenciales de GCP. Asegúrate de que la sección `[gcp_service_account]` esté configurada en el archivo `.streamlit/secrets.toml`.")
+    st.stop()
+
+# Asegurar que la private_key tenga el formato correcto
+if "private_key" in service_account_info:
+    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+
+try:
+    # Inicializar cliente de Google Cloud Storage (más confiable)
+    credentials = service_account.Credentials.from_service_account_info(service_account_info)
+    storage_client = storage.Client(credentials=credentials)
+    
+    # También inicializar gcsfs para compatibilidad
+    fs = gcsfs.GCSFileSystem(token=service_account_info)
+    
+except Exception as e:
+    st.error(f"Error al inicializar el cliente de GCS: {e}")
+    st.stop()
+
+# Funciones de utilidad para archivos en GCS
+def load_json_file(filename, default=None):
+    """Carga un archivo JSON desde GCS, retorna default si no existe"""
     try:
-        st.write("🔍 Iniciando inicialización de GCS...")
-        
-        # Verificar si existen los secrets
-        if not hasattr(st, 'secrets') or not st.secrets:
-            st.error("No se encontraron secrets configurados en Streamlit")
-            return False
-        
-        st.write("✅ Secrets encontrados")
-        
-        # Obtener las credenciales del formato TOML de Streamlit
-        if 'gcp_service_account' in st.secrets:
-            service_account_info = dict(st.secrets["gcp_service_account"])
-            st.write("✅ Sección gcp_service_account encontrada en secrets")
+        # Extraer bucket y path del filename gs://
+        if filename.startswith("gs://"):
+            bucket_name = filename.split("/")[2]
+            blob_path = "/".join(filename.split("/")[3:])
             
-            # Debug: mostrar información de las credenciales (sin datos sensibles)
-            st.write(f"📋 Project ID: {service_account_info.get('project_id', 'No encontrado')}")
-            st.write(f"📧 Client Email: {service_account_info.get('client_email', 'No encontrado')}")
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
             
-            # Asegurarse de que la private_key tenga el formato correcto
-            if 'private_key' in service_account_info:
-                private_key = service_account_info['private_key']
-                st.write(f"📏 Longitud de private_key: {len(private_key)} caracteres")
-                
-                # Verificar formato de la private key
-                if 'BEGIN PRIVATE KEY' in private_key and 'END PRIVATE KEY' in private_key:
-                    st.write("✅ Formato de private_key parece correcto")
-                    service_account_info['private_key'] = private_key.replace('\\n', '\n')
-                else:
-                    st.error("❌ Formato de private_key incorrecto")
-                    return False
-            
-            # Método 1: Usar Application Default Credentials (ADC)
-            try:
-                st.write("🔄 Probando con Application Default Credentials...")
-                # Forzar el uso de las credenciales proporcionadas
-                credentials = service_account.Credentials.from_service_account_info(
-                    service_account_info,
-                    scopes=['https://www.googleapis.com/auth/cloud-platform']
-                )
-                st.write("✅ Credenciales creadas con scopes explícitos")
-                
-                # Inicializar filesystem
-                fs = gcsfs.GCSFileSystem(
-                    project=service_account_info['project_id'], 
-                    token=credentials
-                )
-                st.write("✅ Filesystem inicializado")
-                
-            except Exception as method1_error:
-                st.error(f"❌ Error con método 1: {method1_error}")
-                
-                # Método 2: Usar credenciales por defecto del entorno
-                try:
-                    st.write("🔄 Probando con credenciales por defecto...")
-                    credentials, project = default()
-                    fs = gcsfs.GCSFileSystem(project=service_account_info['project_id'])
-                    st.write("✅ Filesystem inicializado con credenciales por defecto")
-                    
-                except Exception as method2_error:
-                    st.error(f"❌ Error con método 2: {method2_error}")
-                    
-                    # Método 3: Usar solo project_id (para cuando las credenciales están en el entorno)
-                    try:
-                        st.write("🔄 Probando solo con project_id...")
-                        fs = gcsfs.GCSFileSystem(project=service_account_info['project_id'])
-                        st.write("✅ Filesystem inicializado solo con project_id")
-                        
-                    except Exception as method3_error:
-                        st.error(f"❌ Error con método 3: {method3_error}")
-                        return False
-            
-            # Test simple de conexión
-            try:
-                st.write("🔍 Probando conexión con GCS...")
-                # Listar buckets para verificar conexión
-                buckets = fs.ls('')
-                st.write(f"✅ Conexión exitosa. Buckets disponibles: {len(buckets)}")
-                
-                # Verificar acceso al bucket específico
-                bucket_names = [b.split('/')[-1] for b in buckets if b.endswith('/')]
-                if GCS_BUCKET in bucket_names:
-                    st.write(f"✅ Bucket '{GCS_BUCKET}' encontrado")
-                    return True
-                else:
-                    st.error(f"❌ Bucket '{GCS_BUCKET}' no encontrado")
-                    st.write(f"Buckets disponibles: {bucket_names}")
-                    return False
-                    
-            except Exception as test_error:
-                st.error(f"❌ Error al conectar con GCS: {test_error}")
-                return False
-                
+            if blob.exists():
+                content = blob.download_as_text()
+                return json.loads(content)
         else:
-            st.error("No se encontró la sección 'gcp_service_account' en los secrets")
-            return False
+            if fs.exists(filename):
+                with fs.open(filename, 'rb') as f:
+                    return json.load(f)
+    except Exception as e:
+        st.error(f"Error al cargar el archivo JSON desde GCS: {e}")
+    return default if default is not None else {}
+
+def save_json_file(filename, data):
+    """Guarda datos en un archivo JSON en GCS"""
+    try:
+        # Extraer bucket y path del filename gs://
+        if filename.startswith("gs://"):
+            bucket_name = filename.split("/")[2]
+            blob_path = "/".join(filename.split("/")[3:])
             
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            blob.upload_from_string(json.dumps(data, ensure_ascii=False, indent=2), content_type='application/json')
+        else:
+            with fs.open(filename, 'wb') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        st.error(f"❌ Error general al inicializar GCS: {e}")
-        st.code(traceback.format_exc())
-        return False
+        st.error(f"Error al guardar los datos JSON en GCS: {e}")
 
-# Función alternativa para inicializar GCS (más simple)
-def initialize_gcs_simple():
-    """Inicialización simple de GCS"""
-    global fs
+def load_products(filename=PRODUCTS_FILE):
+    """Carga la lista de productos desde un archivo CSV en GCS"""
     try:
-        # Usar las credenciales por defecto del entorno
-        fs = gcsfs.GCSFileSystem(project="nissan-435902")
-        return True
+        # Extraer bucket y path del filename gs://
+        if filename.startswith("gs://"):
+            bucket_name = filename.split("/")[2]
+            blob_path = "/".join(filename.split("/")[3:])
+            
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            if blob.exists():
+                content = blob.download_as_bytes()
+                return pd.read_csv(BytesIO(content))
+        else:
+            if fs.exists(filename):
+                with fs.open(filename, 'rb') as f:
+                    return pd.read_csv(f)
     except Exception as e:
-        st.error(f"Error simple: {e}")
-        return False
+        st.error(f"Error al cargar el archivo de precios desde GCS: {e}")
+    return pd.DataFrame(columns=['Familia', 'Año', 'Precio_Nibol', 'Precio_Lista', 'Descuento', 'Precio_Final',
+                                 'Dscto_Gerencia', 'Dsct_Seguro', 'Dscto_Impuesto', 'Bono', 'Precio_Gerencia',
+                                 'Precio_BOB', 'USDT', 'USD_Ext', 'USD_Efect'])
 
-# Mostrar página de debug inicial
-st.title("🔧 Debug de Conexión GCS")
-st.markdown("---")
-
-# Opción para probar diferentes métodos
-method = st.radio("Selecciona método de conexión:", 
-                 ["Automático", "Solo project_id", "Con credenciales explícitas"])
-
-if st.button("🔌 Probar Conexión"):
-    if method == "Automático":
-        success = initialize_gcs()
-    elif method == "Solo project_id":
-        success = initialize_gcs_simple()
-    else:
-        success = initialize_gcs()
-    
-    if success:
-        st.session_state.gcs_initialized = True
-        st.success("🎉 GCS inicializado correctamente!")
-    else:
-        st.error("❌ No se pudo inicializar GCS")
-
-st.markdown("---")
-
-if st.session_state.get('gcs_initialized'):
-    st.success("✅ GCS inicializado - Probando operaciones...")
-    
-    # Probar operaciones básicas
+def load_historical_products(historical_filename):
+    """Carga un archivo de precios histórico desde GCS"""
     try:
-        # Verificar si existe el bucket
-        exists = fs.exists(GCS_BUCKET)
-        st.write(f"📦 Bucket existe: {exists}")
+        full_path = f"{PRODUCTS_HISTORICAL_PATH}{historical_filename}"
         
-        if exists:
-            # Listar contenido del bucket
-            try:
-                contenido = fs.ls(GCS_BUCKET)
-                st.write(f"📁 Contenido del bucket: {contenido}")
-            except Exception as e:
-                st.error(f"❌ Error al listar bucket: {e}")
+        # Extraer bucket y path
+        if full_path.startswith("gs://"):
+            bucket_name = full_path.split("/")[2]
+            blob_path = "/".join(full_path.split("/")[3:])
             
-            # Verificar si existe el directorio
-            dir_path = f"{GCS_BUCKET}/{GCS_PATH}"
-            dir_exists = fs.exists(dir_path)
-            st.write(f"📂 Directorio existe: {dir_exists}")
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
             
-            if not dir_exists:
-                st.info("ℹ️ El directorio no existe, se creará automáticamente")
-            
-            # Probar escritura
-            try:
-                test_file = f"{GCS_BUCKET}/test_connection.txt"
-                with fs.open(test_file, 'w') as f:
-                    f.write(f"Test de conexión exitoso - {datetime.now()}")
-                st.success("✅ Escritura exitosa")
-                
-                # Limpiar archivo de test
-                if fs.exists(test_file):
-                    fs.rm(test_file)
-                    
-            except Exception as e:
-                st.error(f"❌ Error de escritura: {e}")
-    
+            if blob.exists():
+                content = blob.download_as_bytes()
+                return pd.read_csv(BytesIO(content))
+        else:
+            if fs.exists(full_path):
+                with fs.open(full_path, 'rb') as f:
+                    return pd.read_csv(f)
     except Exception as e:
-        st.error(f"❌ Error en operaciones: {e}")
+        st.error(f"Error al cargar el archivo histórico de precios desde GCS: {e}")
+    return pd.DataFrame(columns=['Familia', 'Año', 'Precio_Nibol', 'Precio_Lista', 'Descuento', 'Precio_Final',
+                                 'Dscto_Gerencia', 'Dsct_Seguro', 'Dscto_Impuesto', 'Bono', 'Precio_Gerencia',
+                                 'Precio_BOB', 'USDT', 'USD_Ext', 'USD_Efect'])
 
-st.markdown("---")
-st.subheader("🔧 Solución de Problemas - Error 401")
+def save_products(df):
+    """Guarda los datos en un archivo CSV en GCS con un nombre de fecha y actualiza el archivo principal"""
+    try:
+        # Generar nombre de archivo con timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        historical_filename = f"{timestamp}_nissan_price_list.csv"
+        
+        # 1. Guardar archivo histórico
+        historical_full_path = f"{PRODUCTS_HISTORICAL_PATH}{historical_filename}"
+        
+        if historical_full_path.startswith("gs://"):
+            bucket_name = historical_full_path.split("/")[2]
+            blob_path = "/".join(historical_full_path.split("/")[3:])
+            
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            blob.upload_from_string(df.to_csv(index=False), content_type='text/csv')
+        else:
+            with fs.open(historical_full_path, 'wb') as f:
+                df.to_csv(f, index=False)
+        
+        # 2. Guardar archivo principal
+        if PRODUCTS_FILE.startswith("gs://"):
+            bucket_name = PRODUCTS_FILE.split("/")[2]
+            blob_path = "/".join(PRODUCTS_FILE.split("/")[3:])
+            
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            blob.upload_from_string(df.to_csv(index=False), content_type='text/csv')
+        else:
+            with fs.open(PRODUCTS_FILE, 'wb') as f:
+                df.to_csv(f, index=False)
 
-st.write("""
-**Para resolver el error 'invalid_scope':**
+    except Exception as e:
+        st.error(f"Error al guardar los datos en GCS: {e}")
 
-1. **Verificar el Service Account en Google Cloud Console:**
-   - Ve a IAM & Admin > Service Accounts
-   - Asegúrate de que el SA tenga el rol **Storage Admin**
-   - Verifica que esté habilitado
+# ... (el resto de tus funciones se mantienen igual)
 
-2. **Verificar formato de credenciales en Streamlit Secrets:**
-   - La private key debe tener saltos de línea correctos
-   - Todos los campos deben estar completos
+# Funciones de autenticación
+def hash_password(password):
+    """Hashea una contraseña usando SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
 
-3. **Probar acceso directo:**
-   - Temporalmente da acceso público al bucket para testing
-   - O crea un nuevo Service Account con permisos mínimos
+def verify_password(password, hashed):
+    """Verifica si la contraseña coincide con el hash"""
+    return hash_password(password) == hashed
 
-4. **Scopes alternativos:**
-   - El error sugiere un problema con los scopes OAuth
-   - Probamos con el scope completo de cloud-platform
-""")
+def create_user(username, password, role="asesor"):
+    """Crea un nuevo usuario"""
+    users = load_json_file(USERS_FILE, {})
+    
+    if username in users:
+        return False, "El usuario ya existe"
+    
+    users[username] = {
+        "password": hash_password(password),
+        "role": role,
+        "created_at": datetime.now().isoformat(),
+        "last_login": None,
+    }
+    
+    save_json_file(USERS_FILE, users)
+    return True, "Usuario creado exitosamente"
 
-# Configuración alternativa para desarrollo
-st.markdown("---")
-st.subheader("🛠️ Configuración Alternativa")
+# ... (continúa con el resto de tus funciones)
 
-if st.button("🔄 Reinicializar GCS"):
-    if 'gcs_initialized' in st.session_state:
-        del st.session_state.gcs_initialized
-    st.rerun()
+def main():
+    """Función principal de la aplicación"""
+    try:
+        initialize_default_data()
+        
+        if "session_id" in st.session_state:
+            valid, username = validate_session(st.session_state.session_id)
+            if not valid:
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+            else:
+                st.session_state.username = username
+                st.session_state.user_role = get_user_role(username)
+        
+        if "session_id" not in st.session_state:
+            st.title("🔐 Sistema de Precios de Vehículos")
+            st.markdown("---")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                show_login_form()
+            with col2:
+                show_info_form()
+                
+            st.markdown("---")
+        
+        else:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.title(f"👋 Bienvenido, {st.session_state.username}")
+                st.caption(f"Rol: {st.session_state.user_role}")
+            with col2:
+                if st.button("🚪 Cerrar Sesión", use_container_width=True):
+                    logout_session(st.session_state.session_id)
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.rerun()
+            
+            st.markdown("---")
+            
+            # Lógica para mostrar contenido basado en el rol
+            user_role = st.session_state.user_role
+            
+            if user_role == "admin":
+                admin_tab1, admin_tab2 = st.tabs(["🚗 Vehículos", "⚙️ Administración"])
+                with admin_tab1:
+                    show_products_dashboard(user_role)
+                with admin_tab2:
+                    show_admin_panel()
+            elif user_role == "gerencia_ventas":
+                ventas_tab1, ventas_tab2 = st.tabs(["🚗 Vehículos", "⚙️ Panel"])
+                with ventas_tab1:
+                    show_products_dashboard(user_role)
+                with ventas_tab2:
+                    show_admin_panel_ventas()
+            elif user_role == "gerencia_media":
+                media_tab1, media_tab2 = st.tabs(["🚗 Vehículos", "⚙️ Panel"])
+                with media_tab1:
+                    show_products_dashboard(user_role)
+                with media_tab2:
+                    show_admin_panel_media()
+            elif user_role == "asesor":
+                show_products_dashboard(user_role)
+                
+    except Exception as e:
+        st.error(f"Error crítico en la aplicación: {e}")
+        st.error("Por favor, verifica tu conexión y configuración de GCP.")
 
-# Solo continuar con la app si GCS está funcionando
-if st.session_state.get('gcs_initialized'):
-    st.success("✅ Puedes continuar con la aplicación principal")
-    if st.button("🚗 Continuar a la aplicación"):
-        st.session_state.show_app = True
-        st.rerun()
-
-if st.session_state.get('show_app'):
-    # Aquí iría el resto de tu aplicación...
-    st.title("🚗 Sistema de Precios de Vehículos")
-    st.write("La aplicación está funcionando correctamente")
-else:
-    st.info("💡 Resuelve los problemas de conexión antes de continuar")
+if __name__ == "__main__":
+    main()
