@@ -10,7 +10,7 @@ import shutil
 import gcsfs
 
 # Configuración de la página
-st.set_page_page(
+st.set_page_config(
     page_title="Sistema de Precios de Vehículos",
     page_icon="🚗",
     layout="wide"
