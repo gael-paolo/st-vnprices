@@ -319,6 +319,7 @@ def show_info_form():
     st.markdown("### Usuarios de Prueba:")
     st.write("- **Admin:** `admin` / `admin123`\n- **Gerencia Ventas:** `gerencia_ventas` / `ventas123`\n- **Gerencia Media:** `gerencia_media` / `media123`\n- **Asesor:** `asesor` / `asesor123`")
 
+
 def show_products_dashboard(user_role):
     """Muestra el dashboard de vehículos según el rol"""
     
@@ -335,6 +336,29 @@ def show_products_dashboard(user_role):
     # Filtro por familia
     families = ['Todas'] + list(products_df['Familia'].unique())
     selected_family = st.selectbox("Filtrar por Familia", families)
+    
+    # Obtener fecha de última modificación del archivo actual
+    current_file_date = "Fecha no disponible"
+    try:
+        if PRODUCTS_FILE.startswith("gs://"):
+            bucket_name = PRODUCTS_FILE.split("/")[2]
+            blob_path = "/".join(PRODUCTS_FILE.split("/")[3:])
+            
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            if blob.exists():
+                # Obtener la fecha de última modificación
+                updated_time = blob.updated
+                current_file_date = updated_time.strftime("%d/%m/%Y %H:%M")
+        else:
+            if fs.exists(PRODUCTS_FILE):
+                # Para sistema de archivos local, usar fecha de modificación
+                mod_time = fs.modified(PRODUCTS_FILE)
+                current_file_date = datetime.fromtimestamp(mod_time).strftime("%d/%m/%Y %H:%M")
+    except Exception as e:
+        st.error(f"Error al obtener fecha del archivo: {e}")
+        current_file_date = "Fecha no disponible"
     
     # Obtener lista de archivos históricos para el selector
     historical_files = []
@@ -361,7 +385,8 @@ def show_products_dashboard(user_role):
             ]
             historical_files = [os.path.basename(f) for f in historical_files]
         
-        historical_files.sort(reverse=True)
+        # Ordenar de más antiguo a más nuevo y tomar solo el más antiguo
+        historical_files.sort()  # Orden ascendente (más antiguo primero)
         
     except Exception as e:
         st.error(f"Error al listar archivos históricos: {e}")
@@ -370,15 +395,14 @@ def show_products_dashboard(user_role):
     # Mostrar botones para versiones anteriores
     col1, col2 = st.columns(2)
     with col1:
-        if len(historical_files) >= 1:
-            # Mostrar los 3 archivos más recientes (excluyendo el actual)
-            recent_files = historical_files[:3]
+        if historical_files:
+            # Mostrar solo el archivo más antiguo (primero en la lista ordenada)
+            oldest_file = historical_files[0]
+            display_name = oldest_file.replace('_nissan_price_list.csv', '').replace('_', ' ')
             
-            for i, historical_file in enumerate(recent_files):
-                display_name = historical_file.replace('_nissan_price_list.csv', '').replace('_', ' ')
-                if st.button(f"📅 {display_name}", key=f"btn_historical_{i}"):
-                    st.session_state.show_historical_file = historical_file
-                    st.rerun()
+            if st.button(f"📅 Versión Anterior ({display_name})", key="btn_oldest_historical"):
+                st.session_state.show_historical_file = oldest_file
+                st.rerun()
         else:
             st.button("Ver Precios Anteriores", disabled=True, 
                      help="No hay archivos históricos disponibles")
@@ -397,29 +421,11 @@ def show_products_dashboard(user_role):
         
         if df_to_display.empty:
             st.warning("No se pudo cargar el archivo histórico seleccionado.")
-            # Intentar cargar de manera alternativa
-            try:
-                historical_full_path = f"{PRODUCTS_HISTORICAL_PATH}{st.session_state.show_historical_file}"
-                st.info(f"Intentando cargar desde: {historical_full_path}")
-                
-                if historical_full_path.startswith("gs://"):
-                    bucket_name = historical_full_path.split("/")[2]
-                    blob_path = "/".join(historical_full_path.split("/")[3:])
-                    
-                    bucket = storage_client.bucket(bucket_name)
-                    blob = bucket.blob(blob_path)
-                    
-                    if blob.exists():
-                        content = blob.download_as_bytes()
-                        df_to_display = pd.read_csv(BytesIO(content))
-                        st.success("¡Archivo cargado exitosamente!")
-            except Exception as e:
-                st.error(f"Error alternativo al cargar histórico: {e}")
-            
-            if df_to_display.empty:
-                return
+            return
     else:
-        st.markdown("### 📊 Precios Actuales de Vehículos")
+        # Mostrar fecha de subida del archivo actual
+        st.markdown(f"### 📊 Precios Actuales de Vehículos")
+        st.caption(f"🕐 **Fecha de actualización:** {current_file_date}")
         df_to_display = products_df
     
     # Aplicar el filtro de familia a la tabla a mostrar
@@ -467,7 +473,7 @@ def show_products_dashboard(user_role):
         st.info(f"📋 Visualizando archivo histórico: **{st.session_state.show_historical_file}**")
     else:
         st.info("📋 Visualizando precios actuales")
-        
+                
 def show_admin_panel():
     """Muestra el panel de administración completo para el rol de admin"""
     st.markdown("## ⚙️ Panel de Administración")
