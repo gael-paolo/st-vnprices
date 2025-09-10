@@ -31,11 +31,16 @@ except KeyError:
     st.error("No se encontraron las credenciales de GCP. Asegúrate de que la sección `[gcp_service_account]` esté configurada en el archivo `.streamlit/secrets.toml`.")
     st.stop()
 
-if "private_key" in service_account_info:
-    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+# Create a copy of the secrets dictionary to make it mutable
+service_account_token = service_account_info.copy()
 
+# Correct the private key format if it exists
+if "private_key" in service_account_token:
+    service_account_token["private_key"] = service_account_token["private_key"].replace("\\n", "\n")
+
+# Use the modified dictionary to initialize the GCS filesystem
 try:
-    fs = gcsfs.GCSFileSystem(token=service_account_info)
+    fs = gcsfs.GCSFileSystem(token=service_account_token)
 except Exception as e:
     st.error(f"Error al inicializar el cliente de GCS: {e}")
     st.stop()
