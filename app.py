@@ -13,7 +13,7 @@ from google.oauth2 import service_account
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Sistema de Precios de Vehículos",
+    page_title="Nissan VN Price List",
     page_icon="🚗",
     layout="wide"
 )
@@ -458,23 +458,7 @@ def show_products_dashboard(user_role):
         st.dataframe(df_to_display, use_container_width=True, hide_index=True)
         
     st.markdown("---")
-    
-    # Mostrar estadísticas
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Vehículos", len(df_to_display))
-    with col2:
-        if 'Precio_Final' in df_to_display.columns and not df_to_display.empty:
-            avg_price = df_to_display['Precio_Final'].mean()
-            st.metric("Precio Final Promedio", f"${avg_price:,.2f}")
-        else:
-            st.metric("Precio Final Promedio", "N/A")
-    with col3:
-        if 'Familia' in df_to_display.columns and not df_to_display.empty:
-            st.metric("Familias de Vehículos", df_to_display['Familia'].nunique())
-        else:
-            st.metric("Familias de Vehículos", "N/A")
-    
+        
     # Mostrar información adicional sobre el archivo cargado
     if 'show_historical_file' in st.session_state:
         st.info(f"📋 Visualizando archivo histórico: **{st.session_state.show_historical_file}**")
@@ -662,7 +646,7 @@ def main():
                 st.session_state.user_role = get_user_role(username)
         
         if "session_id" not in st.session_state:
-            st.title("🔐 Sistema de Precios de Vehículos")
+            st.title("🔐 Nissan VN Price List")
             st.markdown("---")
             
             col1, col2 = st.columns(2)
