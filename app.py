@@ -339,21 +339,49 @@ def show_products_dashboard(user_role):
     # Obtener lista de archivos históricos para el selector
     historical_files = []
     try:
-        historical_files = fs.ls(PRODUCTS_HISTORICAL_PATH)
-        historical_files = [os.path.basename(f) for f in historical_files if f.endswith('.csv')]
+        # Listar archivos en la carpeta histórica
+        if PRODUCTS_HISTORICAL_PATH.startswith("gs://"):
+            # Para GCS: extraer bucket y path
+            bucket_name = PRODUCTS_HISTORICAL_PATH.split("/")[2]
+            folder_path = "/".join(PRODUCTS_HISTORICAL_PATH.split("/")[3:])
+            
+            bucket = storage_client.bucket(bucket_name)
+            blobs = list(bucket.list_blobs(prefix=folder_path))
+            
+            historical_files = [
+                os.path.basename(blob.name) 
+                for blob in blobs 
+                if blob.name.endswith('.csv') and blob.name != folder_path + "/"
+            ]
+        else:
+            # Para sistema de archivos local
+            historical_files = [
+                f for f in fs.ls(PRODUCTS_HISTORICAL_PATH) 
+                if f.endswith('.csv') and os.path.isfile(f)
+            ]
+            historical_files = [os.path.basename(f) for f in historical_files]
+        
         historical_files.sort(reverse=True)
-    except:
-        pass 
+        
+    except Exception as e:
+        st.error(f"Error al listar archivos históricos: {e}")
+        historical_files = []
     
+    # Mostrar botones para versiones anteriores
     col1, col2 = st.columns(2)
     with col1:
-        if len(historical_files) >= 2:
-            second_last_file = historical_files[1]
-            if st.button(f"Ver Precios Anteriores ({second_last_file})", key="btn_old_prices"):
-                st.session_state.show_historical_file = second_last_file
-                st.rerun()
+        if len(historical_files) >= 1:
+            # Mostrar los 3 archivos más recientes (excluyendo el actual)
+            recent_files = historical_files[:3]
+            
+            for i, historical_file in enumerate(recent_files):
+                display_name = historical_file.replace('_nissan_price_list.csv', '').replace('_', ' ')
+                if st.button(f"📅 {display_name}", key=f"btn_historical_{i}"):
+                    st.session_state.show_historical_file = historical_file
+                    st.rerun()
         else:
-            st.button("Ver Precios Anteriores", key="btn_old_prices", disabled=True, help="Necesitas al menos dos archivos históricos para ver una versión anterior.")
+            st.button("Ver Precios Anteriores", disabled=True, 
+                     help="No hay archivos históricos disponibles")
 
     with col2:
         if st.session_state.get('show_historical_file'):
@@ -366,11 +394,32 @@ def show_products_dashboard(user_role):
     if 'show_historical_file' in st.session_state:
         st.markdown(f"### 📜 Precios Históricos ({st.session_state.show_historical_file})")
         df_to_display = load_historical_products(st.session_state.show_historical_file)
+        
         if df_to_display.empty:
             st.warning("No se pudo cargar el archivo histórico seleccionado.")
-            return
+            # Intentar cargar de manera alternativa
+            try:
+                historical_full_path = f"{PRODUCTS_HISTORICAL_PATH}{st.session_state.show_historical_file}"
+                st.info(f"Intentando cargar desde: {historical_full_path}")
+                
+                if historical_full_path.startswith("gs://"):
+                    bucket_name = historical_full_path.split("/")[2]
+                    blob_path = "/".join(historical_full_path.split("/")[3:])
+                    
+                    bucket = storage_client.bucket(bucket_name)
+                    blob = bucket.blob(blob_path)
+                    
+                    if blob.exists():
+                        content = blob.download_as_bytes()
+                        df_to_display = pd.read_csv(BytesIO(content))
+                        st.success("¡Archivo cargado exitosamente!")
+            except Exception as e:
+                st.error(f"Error alternativo al cargar histórico: {e}")
+            
+            if df_to_display.empty:
+                return
     else:
-        st.markdown("### Precios Actuales de Vehículos")
+        st.markdown("### 📊 Precios Actuales de Vehículos")
         df_to_display = products_df
     
     # Aplicar el filtro de familia a la tabla a mostrar
@@ -382,13 +431,22 @@ def show_products_dashboard(user_role):
 
     # Visualización de datos
     if user_role == "asesor":
-        df_display = df_to_display[['Familia', 'Año', 'Precio_Nibol', 'Precio_Lista', 'Descuento', 'Precio_Final']]
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        # Para asesores, mostrar solo columnas básicas
+        basic_columns = ['Familia', 'Año', 'Precio_Nibol', 'Precio_Lista', 'Descuento', 'Precio_Final']
+        available_columns = [col for col in basic_columns if col in df_to_display.columns]
+        
+        if available_columns:
+            df_display = df_to_display[available_columns]
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(df_to_display, use_container_width=True, hide_index=True)
     else:
+        # Para otros roles, mostrar todas las columnas
         st.dataframe(df_to_display, use_container_width=True, hide_index=True)
         
     st.markdown("---")
     
+    # Mostrar estadísticas
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Vehículos", len(df_to_display))
@@ -396,10 +454,20 @@ def show_products_dashboard(user_role):
         if 'Precio_Final' in df_to_display.columns and not df_to_display.empty:
             avg_price = df_to_display['Precio_Final'].mean()
             st.metric("Precio Final Promedio", f"${avg_price:,.2f}")
+        else:
+            st.metric("Precio Final Promedio", "N/A")
     with col3:
         if 'Familia' in df_to_display.columns and not df_to_display.empty:
             st.metric("Familias de Vehículos", df_to_display['Familia'].nunique())
-
+        else:
+            st.metric("Familias de Vehículos", "N/A")
+    
+    # Mostrar información adicional sobre el archivo cargado
+    if 'show_historical_file' in st.session_state:
+        st.info(f"📋 Visualizando archivo histórico: **{st.session_state.show_historical_file}**")
+    else:
+        st.info("📋 Visualizando precios actuales")
+        
 def show_admin_panel():
     """Muestra el panel de administración completo para el rol de admin"""
     st.markdown("## ⚙️ Panel de Administración")
