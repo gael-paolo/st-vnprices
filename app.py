@@ -36,7 +36,7 @@ try:
         service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
         
 except KeyError:
-    st.error("No se encontraron las credenciales de GCP. Asegúrate de que la sección `[gcp_service_account]` esté configurada en el archivo `.streamlit/secrets.toml`.")
+    st.error("No se encontraron las credenciales de GCP`.")
     st.stop()
 
 try:
@@ -53,7 +53,6 @@ except Exception as e:
 
 # Funciones de utilidad para archivos en GCS
 def load_json_file(filename, default=None):
-    """Carga un archivo JSON desde GCS, retorna default si no existe"""
     try:
         # Extraer bucket y path del filename gs://
         if filename.startswith("gs://"):
@@ -75,7 +74,7 @@ def load_json_file(filename, default=None):
     return default if default is not None else {}
 
 def save_json_file(filename, data):
-    """Guarda datos en un archivo JSON en GCS"""
+
     try:
         # Extraer bucket y path del filename gs://
         if filename.startswith("gs://"):
@@ -93,7 +92,7 @@ def save_json_file(filename, data):
         st.error(f"Error al guardar los datos JSON en GCS: {e}")
 
 def load_products(filename=PRODUCTS_FILE):
-    """Carga la lista de productos desde un archivo CSV en GCS"""
+
     try:
         # Extraer bucket y path del filename gs://
         if filename.startswith("gs://"):
@@ -117,7 +116,7 @@ def load_products(filename=PRODUCTS_FILE):
                                  'Precio_BOB', 'USDT', 'USD_Ext', 'USD_Efect'])
 
 def load_historical_products(historical_filename):
-    """Carga un archio de precios histórico desde GCS"""
+
     try:
         full_path = f"{PRODUCTS_HISTORICAL_PATH}{historical_filename}"
         
@@ -143,7 +142,7 @@ def load_historical_products(historical_filename):
                                  'Precio_BOB', 'USDT', 'USD_Ext', 'USD_Efect'])
 
 def save_products(df):
-    """Guarda los datos en un archivo CSV en GCS con un nombre de fecha y actualiza el archivo principal"""
+
     try:
         # Generar nombre de archivo con timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -207,7 +206,7 @@ def create_user(username, password, role="asesor"):
     return True, "Usuario creado exitosamente"
 
 def delete_user(username_to_delete):
-    """Elimina un usuario del sistema"""
+
     users = load_json_file(USERS_FILE, {})
     
     if username_to_delete not in users:
@@ -240,7 +239,7 @@ def get_user_role(username):
 
 # Funciones de sesión
 def create_session(username):
-    """Crea una sesión para el usuario"""
+
     sessions = load_json_file(SESSIONS_FILE, {})
     session_id = hashlib.md5(f"{username}{datetime.now()}".encode()).hexdigest()
     
@@ -271,7 +270,7 @@ def validate_session(session_id):
     return True, session["username"]
 
 def logout_session(session_id):
-    """Cierra una sesión"""
+
     sessions = load_json_file(SESSIONS_FILE, {})
     if session_id in sessions:
         del sessions[session_id]
@@ -288,7 +287,7 @@ def initialize_default_data():
 
 # Funciones de interfaz
 def show_login_form():
-    """Muestra el formulario de login"""
+
     st.markdown("## 🔐 Iniciar Sesión")
     
     with st.form("login_form"):
@@ -313,17 +312,15 @@ def show_login_form():
                 st.error("Por favor, complete todos los campos")
 
 def show_info_form():
-    """Muestra información para nuevos usuarios"""
+
     st.markdown("## ℹ️ Información del Sistema")
     st.info("ℹ️ El registro de nuevos usuarios solo puede ser realizado por un administrador.")
-    st.markdown("### Usuarios de Prueba:")
-    st.write("- **Admin:** `admin` / `admin123`\n- **Gerencia Ventas:** `gerencia_ventas` / `ventas123`\n- **Gerencia Media:** `gerencia_media` / `media123`\n- **Asesor:** `asesor` / `asesor123`")
-
+#    st.markdown("### Usuarios de Prueba:")
+#    st.write("- **Admin:** `admin` / `admin123`\n- **Gerencia Ventas:** `gerencia_ventas` / `ventas123`\n- **Gerencia Media:** `gerencia_media` / `media123`\n- **Asesor:** `asesor` / `asesor123`")
 
 def show_products_dashboard(user_role):
-    """Muestra el dashboard de vehículos según el rol"""
-    
-    st.markdown("## 🚗 Catálogo de Vehículos")
+   
+    st.markdown("## 🚗 Price List")
     
     products_df = load_products()
     
@@ -349,16 +346,26 @@ def show_products_dashboard(user_role):
             
             if blob.exists():
                 # Obtener la fecha de última modificación
+                blob.reload()  # Forzar la actualización de metadata
                 updated_time = blob.updated
-                current_file_date = updated_time.strftime("%d/%m/%Y %H:%M")
+                if updated_time:
+                    current_file_date = updated_time.strftime("%d/%m/%Y %H:%M")
+                else:
+                    current_file_date = "Fecha no disponible"
         else:
             if fs.exists(PRODUCTS_FILE):
                 # Para sistema de archivos local, usar fecha de modificación
-                mod_time = fs.modified(PRODUCTS_FILE)
-                current_file_date = datetime.fromtimestamp(mod_time).strftime("%d/%m/%Y %H:%M")
+                try:
+                    mod_time = fs.modified(PRODUCTS_FILE)
+                    if mod_time:
+                        current_file_date = datetime.fromtimestamp(mod_time).strftime("%d/%m/%Y %H:%M")
+                except:
+                    # Fallback: usar fecha actual si no se puede obtener la de modificación
+                    current_file_date = datetime.now().strftime("%d/%m/%Y %H:%M")
     except Exception as e:
         st.error(f"Error al obtener fecha del archivo: {e}")
-        current_file_date = "Fecha no disponible"
+        # Usar fecha actual como fallback
+        current_file_date = datetime.now().strftime("%d/%m/%Y %H:%M")
     
     # Obtener lista de archivos históricos para el selector
     historical_files = []
@@ -473,7 +480,7 @@ def show_products_dashboard(user_role):
         st.info(f"📋 Visualizando archivo histórico: **{st.session_state.show_historical_file}**")
     else:
         st.info("📋 Visualizando precios actuales")
-                
+
 def show_admin_panel():
     """Muestra el panel de administración completo para el rol de admin"""
     st.markdown("## ⚙️ Panel de Administración")
