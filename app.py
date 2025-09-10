@@ -25,11 +25,24 @@ PRODUCTS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/products.csv"
 PRODUCTS_HISTORICAL_PATH = f"gs://{GCS_BUCKET}/{GCS_PATH}/historical/"
 
 # Inicializar sistema de archivos de GCS
-fs = gcsfs.GCSFileSystem()
+secrets = st.secrets
+service_account_info = secrets.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+# Verifica si las credenciales están en un formato válido para GCS
+if service_account_info is None:
+    st.error("No se encontraron las credenciales de GCP. Asegúrate de que la variable `GOOGLE_APPLICATION_CREDENTIALS` esté configurada en los secretos de Streamlit Cloud.")
+    st.stop()
+
+# Crea el cliente de GCS
+try:
+    fs = gcsfs.GCSFileSystem(token=service_account_info)
+except Exception as e:
+    st.error(f"Error al inicializar el cliente de GCS: {e}")
+    st.stop()
 
 # Funciones de utilidad para archivos en GCS
 def load_json_file(filename, default=None):
-
+    # Lógica de carga sin cambios, ya que fs ya está inicializado
     try:
         if fs.exists(filename):
             with fs.open(filename, 'rb') as f:
