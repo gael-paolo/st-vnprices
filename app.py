@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 # Configuración de GCP y rutas de archivo en el bucket
-GCS_BUCKET = "bk-vn"
+GCS_BUCKET = "bk_vn"
 GCS_PATH = "nissan/prices"
 USERS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/users.json"
 SESSIONS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/sessions.json"
