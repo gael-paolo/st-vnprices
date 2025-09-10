@@ -10,8 +10,8 @@ import shutil
 import gcsfs
 
 # Configuración de la página
-st.set_page_config(
-    page_title="Nissan Prices List",
+st.set_page_page(
+    page_title="Sistema de Precios de Vehículos",
     page_icon="🚗",
     layout="wide"
 )
@@ -24,16 +24,16 @@ SESSIONS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/sessions.json"
 PRODUCTS_FILE = f"gs://{GCS_BUCKET}/{GCS_PATH}/products.csv"
 PRODUCTS_HISTORICAL_PATH = f"gs://{GCS_BUCKET}/{GCS_PATH}/historical/"
 
-# Inicializar sistema de archivos de GCS
-secrets = st.secrets
-service_account_info = secrets.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-# Verifica si las credenciales están en un formato válido para GCS
-if service_account_info is None:
-    st.error("No se encontraron las credenciales de GCP. Asegúrate de que la variable `GOOGLE_APPLICATION_CREDENTIALS` esté configurada en los secretos de Streamlit Cloud.")
+# Lógica para inicializar el cliente de GCS
+try:
+    service_account_info = st.secrets["gcp_service_account"]
+except KeyError:
+    st.error("No se encontraron las credenciales de GCP. Asegúrate de que la sección `[gcp_service_account]` esté configurada en el archivo `.streamlit/secrets.toml`.")
     st.stop()
 
-# Crea el cliente de GCS
+if "private_key" in service_account_info:
+    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+
 try:
     fs = gcsfs.GCSFileSystem(token=service_account_info)
 except Exception as e:
@@ -42,7 +42,7 @@ except Exception as e:
 
 # Funciones de utilidad para archivos en GCS
 def load_json_file(filename, default=None):
-    # Lógica de carga sin cambios, ya que fs ya está inicializado
+    """Carga un archivo JSON desde GCS, retorna default si no existe"""
     try:
         if fs.exists(filename):
             with fs.open(filename, 'rb') as f:
@@ -86,7 +86,7 @@ def load_historical_products(historical_filename):
 
 
 def save_products(df):
-
+    """Guarda los datos en un archivo CSV en GCS con un nombre de fecha y actualiza el archivo principal"""
     try:
         # Generar nombre de archivo con timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -266,7 +266,7 @@ def show_products_dashboard(user_role):
         historical_files = [os.path.basename(f) for f in historical_files if f.endswith('.csv')]
         historical_files.sort(reverse=True)
     except:
-        pass # No hacer nada si no se pueden listar los archivos
+        pass 
     
     col1, col2 = st.columns(2)
     with col1:
